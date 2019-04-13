@@ -1,0 +1,206 @@
+---
+title: "German Credit Loan"
+author: "Christian Braz"
+date: "9 de junho de 2018"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(tidy = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(fig.width=5, fig.height=4)
+
+measurePrecisionRecall <- function(predict, actual_labels){
+  precision <- sum(predict & actual_labels) / sum(predict)
+  recall <- sum(predict & actual_labels) / sum(actual_labels)
+  fmeasure <- 2 * precision * recall / (precision + recall)
+  
+  cat('\nPrecision:  ')
+  cat(round(precision,2))
+  cat('\n')
+
+  cat('Recall (sensitivity):     ')
+  cat(round(recall,2))
+  cat('\n')
+
+  cat('F-score:  ')
+  cat(round(fmeasure,2))
+  cat('\n')
+}
+
+
+df = data.frame(read.csv('GermanData.csv'))
+colnames(df) <- c("Status_Checking", "Duration", "Credit_history", "Purpose", "Credit_amount",
+                       "Saving","Empolyment_duration", "Installment_rate", "Personal_status",
+                       "Otherdebtors", "Residence_Year", "Property", "Age", "Other_installment_plan",
+                       "Housing", "Exisiting_credits", "Job", "Liable_People", "Telephone",
+                       "Foreign_worker", "Credit_default")
+
+#write.table(x=df,file = 'german_default.csv', sep = ',', col.names = T)
+
+# Cheking missing values
+sort(colSums(is.na(df)),decreasing = T)
+
+
+df[df$Credit_default==1,'Credit_default'] = 0  # no default
+df[df$Credit_default==2,'Credit_default'] = 1  # default
+
+# Feature engineering
+# Handling attibute 9
+# Attribute 9:  (qualitative)
+# 	      Personal status and sex
+# 	      A91 : male   : divorced/separated
+# 	      A92 : female : divorced/separated/married
+#         A93 : male   : single
+# 	      A94 : male   : married/widowed
+# 	      A95 : female : single
+# Creating a specific feature for sex
+df[df$Personal_status == 'A91' |  df$Personal_status == 'A94' | df$Personal_status == 'A93' ,'Sex'] = 'M' 
+df[df$Personal_status == 'A92' |  df$Personal_status == 'A95' , 'Sex'] = 'F'
+# Adding meaningful descriptions for Personal_status  
+df[df$Personal_status == 'A91' | df$Personal_status == 'A92', 'Marital_status'] = 'divorced'
+df[df$Personal_status == 'A93' , 'Marital_status'] = 'single'
+df[df$Personal_status == 'A94' , 'Marital_status'] = 'married'
+df$Personal_status = NULL
+df$Sex = as.factor(df$Sex)
+df$Marital_status = as.factor(df$Marital_status)
+str(df)
+
+#library(dplyr)
+#group_by(df[df$Credit_default==1,],Purpose)  %>% summarise(n())
+#group_by(df,Personal_status)  %>% summarise(n())
+
+
+```
+## MCMC 
+
+In this session we explore the Bayesian framework to get better intuition about the data with the aim to provide for the financial instituion meaningful insigths about how to improve its loan management process. There are several categories in the data, each one with several values, and it is important to understand how they compare to each other as group and as individuals.
+
+
+## Logistic Regression
+
+In this section we develop a model to predict the probability whether a person will default or not based on the data. To accomplish this, we fit a logistic regression model using the *glm*  function available in R. As we want to evaluate the accuracy of our predictions, we employ the following methodology:
+
+* Create a balanced train/test: as we are dealing with a binary class problem, it is important to guarantee a balanced partition of the data into train and test sets. We use the library **caret** which has functions that help to address this problem. We leave 70% of the original data for train and 30% for testing. 
+
+* Fit a model using the generalized linear model.
+
+* Predict using the test set.
+
+* Assess the overall accuracy, recall (sensitivity), especificity and precision metrics.
+
+
+
+```{r}
+df = data.frame(read.csv('german_default.csv'))
+
+library(caret)
+set.seed(7)
+
+library(dummies)
+dummies = dummy.data.frame(df, all = FALSE)
+
+Status_checking = c(colnames(dummies[1:4])) 
+Credit_history = c(colnames(dummies[5:9]))
+Purpose = c(colnames(dummies[10:19]))
+Savings = c(colnames(dummies[20:24]))
+Employment = c(colnames(dummies[25:29]))
+Marital_status = c(colnames(dummies[53:55]))
+Job = c(colnames(dummies[43:46]))
+
+xName_numeric=c("Duration","Credit_amount","Installment_rate","Age","Exisiting_credits")
+xName_categorical=c(Status_checking,Credit_history,Purpose,Savings,Employment,Marital_status,Job)
+
+# Concatening the data
+newData = NULL
+newData = cbind(dummies[,xName_categorical], df[,xName_numeric], df[,"Credit_default"])
+colnames(newData)[42] = 'Credit_default'
+
+# Removing categorical features from the dataset
+# newData$Status_Checking = newData$Credit_history = newData$Purpose = newData$Saving = newData$Empolyment_duration =
+# newData$Otherdebtors = newData$Property = newData$Other_installment_plan = newData$Housing = newData$Job =newData$Telephone = newData$Foreign_worker = newData$Sex = newData$Marital_status = NULL
+
+# Creating a balanced split for train/test sets : 30% test 70% train
+# This will be usefull to compare the logistic model with others
+data_part <- createDataPartition(y = newData$Credit_default, p = 0.7, list = F)
+X_train = newData[data_part,]
+#y_train = df[data_part,c('Credit_default')]
+X_test = newData[-data_part,!(colnames(newData) %in% 'Credit_default')]
+y_test = newData[-data_part,c('Credit_default')]  
+
+# Checking balance 
+#table(y_test)
+#table(X_train$Credit_default)
+
+# Fiting a logistic model
+glm.fit = glm(Credit_default~., data = X_train, family = binomial)
+summary(glm.fit)
+exp(glm.fit$coefficients)
+# Predicting
+glm.pred = predict.glm(glm.fit, newdata = X_test, type = "response")
+
+# Calculating accuracy
+glm.pred.class = ifelse(glm.pred > 0.5, 1, 0)
+mean(y_test == glm.pred.class)
+
+confusionMatrix(data=factor(glm.pred.class, levels = c(1,0)), reference=factor(y_test, levels = c(1,0)))
+measurePrecisionRecall(glm.pred.class, y_test)
+
+```
+
+The overall accuracy for this model is about 73% and tells how often this classifier is correct. The precision is 0.63 and measures how often the model is correct in predicting a positive outcome. The recall is 0.43 and tells us when it is actually positive, how often it predicts as positive. This simple model has modest statistics and as our main objective is solely using it as a frequentist estimation to be able to compare it with a bayesian approach, we do not going to try further improvements. Anyway, it is worth noting that in this problem we are more concerned about the false negative rates (recall) instead of the true positives rates (precision). This is because a bank (or any other financial institution lending money to a untrustworthy party) is interested in to minimize the chance of not being paid back the borrowed amount. So, in this setting, it is more problematic to say that a person is reliable when it is not (false negative), instead of saying that a person is not reliable and, in fact, it is (false positive). A way to handle this problem using logistic, is modifying the threshold for the decision of classifying as positive. In other words, one can increase the rate of false positives to decrease the rate of false negatives. This is possible lowering the decision threshold from 0.5, for example, to 0.3. Hence, any probability outcome from the logistic model greater than 0.3 would be classified as a "default risk".    
+
+In the next session we evaluate the same problem, predicting the chance of person default to pay a loan or not, using the bayesian logistic regression approach. We use the same test set created in this session to make predictions using the parameters estimated by bayesian. 
+
+## Bayesian Logistic Regression
+
+```{r}
+
+library(sigmoid)
+# Loading the coefficients calculated by bayes' logistic
+bayesianLogisticParameters = data.frame(read.csv('loan-default-SummaryInfo.csv'))
+# Getting the coefficients
+intercept = bayesianLogisticParameters[1,'Mean']
+coefficients = bayesianLogisticParameters[2:42,'Mean']
+# Starting making predictions
+
+predBayes = c()
+# Convert the data frame to a matrix
+test = as.matrix(X_test)
+
+for (i in 1:nrow(X_test)){
+  
+  # For each sample in test set, apply sigmoid function to make a prediction based on the return of the 
+  # linear function 
+  predBayes[i] = sigmoid(test[i,] %*% coefficients + intercept)
+    
+}
+
+# Calculating accuracy
+bayes.pred.class = ifelse(predBayes > 0.5, 1, 0)
+mean(y_test == bayes.pred.class)
+
+confusionMatrix(data=factor(bayes.pred.class, levels = c(1,0)), reference=factor(y_test, levels = c(1,0)))
+measurePrecisionRecall(bayes.pred.class, y_test)
+
+
+```
+
+
+```{r}
+
+library(pROC)
+
+roc_curve_frequentist = plot.roc(y_test, glm.pred, direction="<", auc = T, col='red', main="Comparison between frequentist and bayesian")
+roc_curve_bayesian = lines.roc(y_test, predBayes, direction="<", auc = T, col='green')
+roc_test = roc.test(roc_curve_frequentist,roc_curve_bayesian)
+text(.5, .5, labels=paste("p-value =", format.pval(roc_test$p.value,2)), adj=c(0, .5))
+text(.9, .4, labels=round(roc_test$estimate[1],3), adj=c(0, .5))
+text(1, .6, labels=round(roc_test$estimate[2],3), adj=c(0, .5))
+legend("bottomright", legend=c("Frequentist", "Bayesian"), col=c("red", "green"), lwd=2)
+
+```
+
+
